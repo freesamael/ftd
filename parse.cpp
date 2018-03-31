@@ -1,14 +1,14 @@
-#include <string>
-#include <vector>
 #include <cstdio>
 #include <cstdlib>
 #include <cstddef>
 #include <cassert>
-#include <pcap/pcap.h>
+#include <fstream>
+#include <vector>
+#include <arpa/inet.h>
 #include <net/ethernet.h>
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
-#include <arpa/inet.h>
+#include <pcap/pcap.h>
 
 using namespace std;
 
@@ -63,6 +63,8 @@ void pcapCallback(uint8_t *user, const struct pcap_pkthdr *h,
 void handleFTD(const FTD* ftd, const uint8_t* ftd_content_bytes);
 void handleField(const Field* field, const uint8_t* bytes);
 
+ofstream gOFS;
+
 int main(int argc, char *argv[]) {
   if (argc != 2) {
     fprintf(stderr, "Usage: %s input.pcap\n", argv[0]);
@@ -74,9 +76,16 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "pcap_open_offline: %s\n", errbuf);
     return EXIT_FAILURE;
   }
+
+  gOFS.open("final_results.csv");
+  gOFS << "OrderStatus, OrderLocalID, LimitPrice, Direction, InstrumentID"
+       << endl;
   if (!pcap_loop(handle, -1, &pcapCallback, nullptr)) {
-    pcap_perror(handle, "pcap_loop: ");
+    char prefix[] = "pcap_loop: ";
+    pcap_perror(handle, prefix);
   }
+
+  gOFS.close();
   pcap_close(handle);
   return 0;
 }
@@ -166,6 +175,16 @@ void handleFTD(const FTD* ftd, const uint8_t* ftd_content_bytes) {
     printf("%02x", ftdc_base_data[i]);
   }
   printf("\n");
+
+  uint32_t tx_id;
+  ((uint16_t*)(&tx_id))[0] = ftdcd->tx_id_l;
+  ((uint16_t*)(&tx_id))[1] = ftdcd->tx_id_r;
+  uint32_t seq_no;
+  ((uint16_t*)(&seq_no))[0] = ftdcd->seq_no_l;
+  ((uint16_t*)(&seq_no))[1] = ftdcd->seq_no_r;
+  uint32_t req_id;
+  ((uint16_t*)(&req_id))[0] = ftdcd->req_id_l;
+  ((uint16_t*)(&req_id))[1] = ftdcd->req_id_r;
   printf("FTD:\n"
          "  type=0x%02x\n"
          "  exthdr_len=%u\n"
@@ -182,11 +201,9 @@ void handleFTD(const FTD* ftd, const uint8_t* ftd_content_bytes) {
          "    req_id=0x%08x\n",
          ftd->type, ftd->exthdr_len, ntohs(ftd->data_len),
          ftdcb->ver, ftdcb->type, ftdcb->chain,
-         ntohs(ftdcd->seq_series),
-         ntohl(((uint32_t)ftdcd->tx_id_r << 16) + ftdcd->tx_id_l),
-         ntohl(((uint32_t)ftdcd->seq_no_r << 16) + ftdcd->seq_no_l),
+         ntohs(ftdcd->seq_series), ntohl(tx_id), ntohl(seq_no),
          ntohs(ftdcd->field_count), ntohs(ftdcd->content_len),
-         ntohl(((uint32_t)ftdcd->req_id_r << 16) + ftdcd->req_id_l));
+         ntohl(req_id));
 #endif
   if (!ftdcd->content_len) { /* No data to process. */ return; }
 
@@ -221,6 +238,7 @@ void handleField(const Field* field, const uint8_t* bytes) {
 
   // We only care about FIELD_TYPE_ORDER_FIELD
   if (ntohs(field->type) != FIELD_TYPE_ORDER_FIELD) { return; }
+
   const char* tradingDay = (const char*)bytes;
   const char* settlementGroupID = (const char*)(bytes + 9);
   const char* participantID = (const char*)(bytes + 35);
@@ -244,10 +262,13 @@ void handleField(const Field* field, const uint8_t* bytes) {
          "      limitPrice=%lf\n"
          "      volume=%08x\n"
          "      orderLocalID=%s\n"
-         "      orderStatus=%c\n"
-         ,
+         "      orderStatus=%c\n",
          tradingDay, settlementGroupID, participantID, clientID, userID,
          instrumentID, direction, limitPrice, volume, orderLocalID, orderStatus
          );
 #endif
+
+  // OrderStatus, OrderLocalID, LimitPrice, Direction, InstrumentID
+  gOFS << orderStatus << ", " << orderLocalID << ", " << limitPrice << ", "
+       << direction << ", " << instrumentID << endl;
 }
