@@ -1,3 +1,9 @@
+/**
+ * The program has been tested on Ubuntu 16.04 and macOS 10.13.
+ * To build, use `clang++ -o parse -lpcap parse.cpp`.
+ * You can optionally pass `-DDEBUG` to enable debug log.
+ */
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstddef>
@@ -9,6 +15,12 @@
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
 #include <pcap/pcap.h>
+
+#ifdef __linux__
+// Linux doesn't have ntohll, but be64toh would do the same.
+#include <endian.h>
+#define ntohll(x) be64toh(x)
+#endif
 
 using namespace std;
 
@@ -68,6 +80,7 @@ ofstream gOFS;
 int main(int argc, char *argv[]) {
   if (argc != 2) {
     fprintf(stderr, "Usage: %s input.pcap\n", argv[0]);
+    return EXIT_FAILURE;
   }
 
   char errbuf[PCAP_ERRBUF_SIZE];
@@ -80,11 +93,7 @@ int main(int argc, char *argv[]) {
   gOFS.open("final_results.csv");
   gOFS << "OrderStatus, OrderLocalID, LimitPrice, Direction, InstrumentID"
        << endl;
-  if (!pcap_loop(handle, -1, &pcapCallback, nullptr)) {
-    char prefix[] = "pcap_loop: ";
-    pcap_perror(handle, prefix);
-  }
-
+  pcap_loop(handle, -1, &pcapCallback, nullptr);
   gOFS.close();
   pcap_close(handle);
   return 0;
